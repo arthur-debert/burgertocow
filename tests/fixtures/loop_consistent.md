@@ -1,0 +1,2 @@
+{% for i in items %}- {{ i }}
+{% endfor %}

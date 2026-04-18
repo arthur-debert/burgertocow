@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 2c5468b5866139db6d05b411859ef1b86e8a6f22860851f17ef8756ee88de902 # shrinks to (template, name, ctx) = ("{{ user }}{{ user }}", "user", Object {"user": String("z")}), new_val = "zA"
+cc 061933f5a85ab739cae05e2f3c9e9d0beaea74e7f8b19108ace12bcd3fbf69f0 # shrinks to (template, name, ctx) = ("{{ user }} | {{ user }}", "user", Object {"user": String("zzzzAAA")}), new_val = "ArrrzrrAA"
+cc 54b66cc64708119395a0f4ab9c2a6ca129d457b171f321f335e73e5945a38694 # shrinks to (template, name, ctx) = ("{{ user }} | {{ user }}", "user", Object {"user": String("9")}), new_val = "90"
