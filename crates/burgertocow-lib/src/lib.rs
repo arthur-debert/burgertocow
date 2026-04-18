@@ -57,5 +57,8 @@ pub mod diff;
 pub mod engine;
 pub mod parser;
 
-pub use diff::{generate_diff, CONFLICT_END, CONFLICT_MID, CONFLICT_START};
+pub use diff::{
+    generate_diff, generate_diff_with_markers, ConflictMarkers, CONFLICT_END, CONFLICT_MID,
+    CONFLICT_START,
+};
 pub use engine::{TrackedRender, Tracker, VAR_END, VAR_START};

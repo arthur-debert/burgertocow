@@ -42,6 +42,52 @@ pub const CONFLICT_START: &str =
 pub const CONFLICT_MID: &str = "# and the updated version has this, resolve this manually\n";
 pub const CONFLICT_END: &str = "<<<< diff decision needed: end >>>>\n";
 
+/// Boundary strings emitted around an unresolvable edit.
+///
+/// A conflict block is built as:
+///
+/// ```text
+/// {start}{original template line(s)}{mid}{user edit}{end}
+/// ```
+///
+/// `generate_diff` uses [`ConflictMarkers::default`], which reproduces the
+/// historical `<<<< diff decision needed: … >>>>` strings. Callers embedding
+/// burgertocow in their own tools can pass custom markers via
+/// [`generate_diff_with_markers`] — for example, to emit markers that match
+/// the calling tool's conflict-resolution conventions, or that are
+/// detectable by a project-specific pre-commit hook.
+///
+/// The `start`, `mid`, and `end` strings are written verbatim. It is the
+/// caller's responsibility to include any trailing newlines needed for the
+/// block to be readable.
+#[derive(Debug, Clone)]
+pub struct ConflictMarkers<'a> {
+    /// Opens the conflict block. Printed immediately before the original
+    /// template line(s).
+    pub start: &'a str,
+    /// Separates the original template content from the user's edit.
+    pub mid: &'a str,
+    /// Closes the conflict block. Printed immediately after the user's edit.
+    pub end: &'a str,
+}
+
+impl Default for ConflictMarkers<'static> {
+    fn default() -> Self {
+        Self {
+            start: CONFLICT_START,
+            mid: CONFLICT_MID,
+            end: CONFLICT_END,
+        }
+    }
+}
+
+impl<'a> ConflictMarkers<'a> {
+    /// Construct a marker set from three caller-owned strings.
+    pub const fn new(start: &'a str, mid: &'a str, end: &'a str) -> Self {
+        Self { start, mid, end }
+    }
+}
+
 /// Run LCS on the two skeletons and produce a render→template index map.
 ///
 /// Entries are `Some(template_skel_idx)` for chars the LCS paired up, and
@@ -243,12 +289,31 @@ enum Mapped {
     },
 }
 
-/// Compute a unified diff expressed against the source template.
+/// Compute a unified diff expressed against the source template, using the
+/// default conflict-block markers.
 ///
 /// The returned string is either a unified diff (same format as
 /// `git diff`) or a conflict block starting with [`CONFLICT_START`]. The
 /// empty string is returned when the modification was a pure data change.
+///
+/// Equivalent to calling [`generate_diff_with_markers`] with
+/// [`ConflictMarkers::default`].
 pub fn generate_diff(template_src: &str, tracked: &TrackedRender, modified_src: &str) -> String {
+    generate_diff_with_markers(template_src, tracked, modified_src, &ConflictMarkers::default())
+}
+
+/// Compute a unified diff expressed against the source template, using
+/// caller-supplied conflict-block markers.
+///
+/// Behaves identically to [`generate_diff`] except that any conflict block
+/// emitted uses the strings from `markers`. Non-conflict output (unified
+/// diffs and empty strings for pure-data changes) is unaffected.
+pub fn generate_diff_with_markers(
+    template_src: &str,
+    tracked: &TrackedRender,
+    modified_src: &str,
+    markers: &ConflictMarkers<'_>,
+) -> String {
     let t_chars: Vec<char> = template_src.chars().collect();
     let mod_chars: Vec<char> = modified_src.chars().collect();
     let tracked_chars: Vec<char> = tracked.tracked().chars().collect();
@@ -351,7 +416,7 @@ pub fn generate_diff(template_src: &str, tracked: &TrackedRender, modified_src: 
             new_chars,
         } = op
         {
-            return format_conflict(&t_chars, *closest_template_idx, new_chars);
+            return format_conflict(&t_chars, *closest_template_idx, new_chars, markers);
         }
     }
 
@@ -433,22 +498,27 @@ fn detect_duplicate_conflicts(mapped_ops: &mut [Mapped]) {
     }
 }
 
-fn format_conflict(t_chars: &[char], anchor: usize, new_chars: &[char]) -> String {
+fn format_conflict(
+    t_chars: &[char],
+    anchor: usize,
+    new_chars: &[char],
+    markers: &ConflictMarkers<'_>,
+) -> String {
     let mut out = String::new();
-    out.push_str(CONFLICT_START);
+    out.push_str(markers.start);
     let (ls, le) = get_line_range(t_chars, anchor, anchor);
     let orig: String = t_chars[ls..le].iter().collect();
     out.push_str(&orig);
     if !orig.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(CONFLICT_MID);
+    out.push_str(markers.mid);
     let updated: String = new_chars.iter().collect();
     out.push_str(&updated);
     if !updated.ends_with('\n') {
         out.push('\n');
     }
-    out.push_str(CONFLICT_END);
+    out.push_str(markers.end);
     out
 }
 
