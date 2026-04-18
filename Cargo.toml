@@ -1,0 +1,6 @@
+[workspace]
+members = [
+    "crates/burgertocow-lib",
+    "crates/burgertocow-cli"
+]
+resolver = "2"

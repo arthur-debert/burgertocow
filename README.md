@@ -5,23 +5,38 @@ Now, some other tool changes the expanded file, we want to reconstruct what a di
 
 Of course, this has no deterministic and generalizable solution. However given the specifics (being in possession of the source text, the value hash and able to instrument the template engine)  we can arrive at heuristics/ algos that , even if not for 100% of the cases , make the correct diff, leaving a minor percentage of occurrences as ambiguous.
 
-Your task, construct test and verify, through a rust crate that you will create, such library, that is it can have a function that takes the same signature as minijinja's rendering one (so that it is transparent to users) and can do the minijinja transformation (and exerting control as necessary, i.e. keeping tabs of the generated output for later). Later on, passed the path to the original file, and an updated version of it, the library should create a standard diff with the diffs that should be merged to the template. In case there is no way to determine, the tool will generate a textual diff that says something like:
-<<<< diff decision needed: start >>>>
-# the original template contained: 
-<lines of the original template>
-# and the updated version has this, resolve this manually
-<updated text
-<<<< diff decision needed: end >>>>
+## Ideas and Solution
 
-You will create this as a pure rust lib, and an accompanying cli . Note that the core logic has to be 100% on the lib, so that lib should have the core api as pure rust, that gets regular rust data types, and recurs regular serializable results. 
-the cli, done via clap as not to created unneeded work, is only about formatting the input and output and calling the Lib
+**The "Skeleton and Alignment" Algorithm**
 
-This should include: 
-- the core logic lib
-- the testing cli
-- a readme that explains the ideas , solution , assumptions and the trade-offs,  which include spelling out under what conditions we cannot reliably determine it.
-- the unit test for this
-- a set of text files as fixture for these tests and manual review
+1. **Shadow Rendering**: The `Tracker` utilizes minijinja's `set_formatter` API to wrap every variable output into invisible Unicode bounds (`<U+001e>` and `<U+001f>`). By capturing this `TrackedRender`, we construct a 100% accurate map dividing the output byte-array into `Variable` vs `Template` regions.
+2. **Skeleton Distillation**:
+    - For the Output, we strip out all variables replacing them with a sentinel value `\0`, creating a `RenderSkeleton`.
+    - For the `SourceTemplate`, we use a lightweight minijinja tokenizer to mask all `{{}}`, `{% %}`, and `{# #}` clusters as `\0`, creating a `TemplateSkeleton`.
+3. **LCS Mapping Alignment**: Since both Skeletons now purely represent the unbroken *static boilerplate text*, we can align them perfectly utilizing the Longest Common Subsequence logic (powered by the `similar` crate). This gives us a rigorous, mathematical coordinate mapping from the rendered output's static text directly to the source template lines.
+4. **Reverse Engineering the Diff**: We diff the `ModifiedText` against the pure original render. 
+   - If the user only modified text bounded by our Variable Regions, we intercept the event and declare a pure Data overriding. No Template Diff is emitted.
+   - If the user modifies standard text, we map their modified cluster back using our alignment logic to the `SourceTemplate`.
 
-PS: I've put in initialramblings.md a list of possible ideas to explore. 
-Use it as you find it usable, but there are in no way a recommendation nor a good approach, feel free to try your own path and or change these in small and large ways
+## Assumptions and Trade-offs
+
+1. **Deterministic Alignment Assumption**: We assume the target user doesn't inject variables that perfectly match standard boilerplate text layout to trick the diff engine.
+2. **Ambiguity Condition Breakdown**:
+    - In templates using control flow operators like `{% for %}`, a single line of static text is expanded into multiple lines.
+    - Our LCS sequence maps `RenderSkeleton` array nodes mathematically backwards. When evaluating loop multiplicities, `similar` aligns exclusively to the *first iteration* representation, marking the later representations as "Insertions".
+    - Thus, if a user mutates the second iteration of a loop in their downstream editor, we catch the "Unmapped Insertion" and *cannot safely determine* if the change should apply to the singular `SourceTemplate` template rule. Thus, we degrade safely. Under these unalignable conditions, the algorithm bails into human-fallback and yields the `<<<< diff decision needed >>>>` block outlining the ambiguity.
+
+## Usage
+The crate supplies both `burgertocow-lib` logic backend and `burgertocow-cli`:
+
+```bash
+# Render to tabs:
+burgertocow render --template tests/fixtures/simple.md --data tests/fixtures/simple_data.json --out out.md
+
+# Reverse-diff the modifications:
+burgertocow diff --template tests/fixtures/simple.md --data tests/fixtures/simple_data.json --modified mod.md
+```
+
+## Testing
+
+The project has tests and text fixtures under `tests/fixtures/`. See `crates/burgertocow-lib/tests/integration.rs` for validations around variables modifications, simple text patches, and ambiguous loop catchers.
