@@ -27,10 +27,34 @@ Of course, this has no deterministic and generalizable solution. However given t
     - Thus, if a user mutates the second iteration of a loop in their downstream editor, we catch the "Unmapped Insertion" and *cannot safely determine* if the change should apply to the singular `SourceTemplate` template rule. Thus, we degrade safely. Under these unalignable conditions, the algorithm bails into human-fallback and yields the `<<<< diff decision needed >>>>` block outlining the ambiguity.
 
 ## Usage
-The crate supplies both `burgertocow-lib` logic backend and `burgertocow-cli`:
+
+The workspace ships two crates: `burgertocow-lib` (the library, imported as `burgertocow`) and the `burgertocow` CLI.
+
+### Library
+
+The rendering surface mirrors `minijinja::Environment` so swapping `Tracker` in for a plain `Environment` is a local change:
+
+```rust
+use burgertocow::{generate_diff, Tracker};
+
+let mut tracker = Tracker::new();
+tracker.add_template("greet", "Hello {{ user }}!\nWelcome.").unwrap();
+
+let ctx = serde_json::json!({ "user": "Arthur" });
+let tracked = tracker.render("greet", &ctx).unwrap();
+
+// `tracked.output()` is what you send downstream (same as plain minijinja).
+// `tracked.tracked()` retains the variable-boundary markers.
+let modified = "Hello Zaphod!\nWelcome, friend.";
+let diff = generate_diff("Hello {{ user }}!\nWelcome.", &tracked, modified);
+```
+
+For full control (filters, globals, loaders, autoescape, ...) reach through `tracker.env_mut()` — it's the raw `minijinja::Environment`.
+
+### CLI
 
 ```bash
-# Render to tabs:
+# Render with markers-stripped output:
 burgertocow render --template tests/fixtures/simple.md --data tests/fixtures/simple_data.json --out out.md
 
 # Reverse-diff the modifications:
@@ -40,3 +64,22 @@ burgertocow diff --template tests/fixtures/simple.md --data tests/fixtures/simpl
 ## Testing
 
 The project has tests and text fixtures under `tests/fixtures/`. See `crates/burgertocow-lib/tests/integration.rs` for validations around variables modifications, simple text patches, and ambiguous loop catchers.
+
+Run the same checks CI runs locally:
+
+```bash
+scripts/check         # fmt + clippy + tests
+scripts/check-fmt     # rustfmt --check
+scripts/check-lint    # clippy -D warnings
+scripts/check-tests   # nextest (or cargo test)
+```
+
+To install the pre-commit hook:
+
+```bash
+ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+```
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).

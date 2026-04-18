@@ -1,35 +1,44 @@
+//! Skeleton extraction for both source templates and tracked renders.
+//!
+//! A "skeleton" is the static-text backbone of a string with all dynamic
+//! parts (template tags or tracked variable emissions) replaced by a single
+//! sentinel character `\0`. Skeletons from the template and from the render
+//! can then be aligned character-by-character with an LCS to recover a
+//! mapping between rendered positions and source-template positions.
+
 #[derive(Debug, Clone)]
 pub struct SkeletonMap {
     pub skeleton: Vec<char>,
-    // For each char in skeleton, its starting char index in the original text
+    /// For each char in `skeleton`, its starting char index in the original text.
     pub char_mapping: Vec<usize>,
 }
 
-/// A very crude minijinja tokenizer that masks all variables and tags
+/// Mask every `{{ … }}`, `{% … %}`, `{# … #}` cluster in a minijinja template
+/// with a single `\0`, preserving all surrounding static text.
 pub fn extract_template_skeleton(template: &str) -> SkeletonMap {
     let mut skeleton = Vec::new();
     let mut char_mapping = Vec::new();
-    
+
     let chars: Vec<char> = template.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        // Tag openers: {{ {% {#
         if chars[i] == '{' && i + 1 < chars.len() {
-            let next = chars[i+1];
+            let next = chars[i + 1];
             if next == '{' || next == '%' || next == '#' {
-                // Determine closing tag: }} %} #}
-                let close1 = if next == '{' { '}' } else if next == '%' { '%' } else { '#' };
+                let close1 = match next {
+                    '{' => '}',
+                    '%' => '%',
+                    _ => '#',
+                };
                 let close2 = '}';
-                
-                let start_idx = i;
+
                 skeleton.push('\0');
-                char_mapping.push(start_idx);
-                
-                i += 2; // skip opener
-                // advance until closer
+                char_mapping.push(i);
+
+                i += 2;
                 while i < chars.len() {
-                    if chars[i] == close1 && i + 1 < chars.len() && chars[i+1] == close2 {
-                        i += 2; // skip closer
+                    if chars[i] == close1 && i + 1 < chars.len() && chars[i + 1] == close2 {
+                        i += 2;
                         break;
                     }
                     i += 1;
@@ -37,28 +46,31 @@ pub fn extract_template_skeleton(template: &str) -> SkeletonMap {
                 continue;
             }
         }
-        
+
         skeleton.push(chars[i]);
         char_mapping.push(i);
         i += 1;
     }
-    
-    SkeletonMap { skeleton, char_mapping }
+
+    SkeletonMap {
+        skeleton,
+        char_mapping,
+    }
 }
 
-/// Masks tracked variable outputs
+/// Mask each tracked variable emission (text between `v_start`/`v_end`
+/// markers) in a render with a single `\0`.
 pub fn extract_render_skeleton(tracked_render: &str, v_start: char, v_end: char) -> SkeletonMap {
     let mut skeleton = Vec::new();
     let mut char_mapping = Vec::new();
-    
+
     let chars: Vec<char> = tracked_render.chars().collect();
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == v_start {
-            let start_idx = i;
             skeleton.push('\0');
-            char_mapping.push(start_idx);
-            
+            char_mapping.push(i);
+
             i += 1;
             while i < chars.len() {
                 if chars[i] == v_end {
@@ -73,12 +85,16 @@ pub fn extract_render_skeleton(tracked_render: &str, v_start: char, v_end: char)
         char_mapping.push(i);
         i += 1;
     }
-    
-    SkeletonMap { skeleton, char_mapping }
+
+    SkeletonMap {
+        skeleton,
+        char_mapping,
+    }
 }
 
-/// Given TrackedRender, reconstruct the PureRender mapping each char 
-/// to its TrackedRender index, and keeping track of variable boundaries!
+/// The tracked render without its markers, with per-char metadata recording
+/// (a) the marker-inclusive index and (b) whether that character came from
+/// a variable emission.
 #[derive(Debug)]
 pub struct PureRenderMap {
     pub text: Vec<char>,
@@ -90,7 +106,7 @@ pub fn extract_pure_render(tracked_render: &str, v_start: char, v_end: char) -> 
     let mut text = Vec::new();
     let mut map_to_tracked = Vec::new();
     let mut is_variable = Vec::new();
-    
+
     let mut in_var = false;
     for (i, c) in tracked_render.chars().enumerate() {
         if c == v_start {
@@ -103,6 +119,10 @@ pub fn extract_pure_render(tracked_render: &str, v_start: char, v_end: char) -> 
             is_variable.push(in_var);
         }
     }
-    
-    PureRenderMap { text, map_to_tracked, is_variable }
+
+    PureRenderMap {
+        text,
+        map_to_tracked,
+        is_variable,
+    }
 }

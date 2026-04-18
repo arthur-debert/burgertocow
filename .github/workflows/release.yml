@@ -1,0 +1,172 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Verify Cargo.toml version matches tag
+        run: |
+          CARGO_VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          TAG_VERSION=${{ steps.version.outputs.version }}
+          if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+            echo "ERROR: Cargo.toml version ($CARGO_VERSION) does not match tag (v$TAG_VERSION)"
+            exit 1
+          fi
+
+      - name: Extract release notes from CHANGELOG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          awk '/^## \['"$VERSION"'\]/{found=1; next} /^## \[/{if(found) exit} found{print}' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "Release v$VERSION" > release-notes.md
+          fi
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          body_path: release-notes.md
+          draft: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-binaries:
+    needs: create-release
+    if: always() && !failure() && !cancelled()
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            artifact: burgertocow-aarch64-apple-darwin
+            cross: false
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: burgertocow-x86_64-linux-gnu
+            cross: false
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            artifact: burgertocow-aarch64-linux-gnu
+            cross: true
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if asset already exists
+        id: check_asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ needs.create-release.outputs.version }}"
+          ASSET="${{ matrix.artifact }}.tar.gz"
+          if gh release view "$TAG" --json assets --jq ".assets[].name" 2>/dev/null | grep -q "^${ASSET}$"; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Asset $ASSET already exists, skipping build"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Rust
+        if: steps.check_asset.outputs.exists != 'true'
+        uses: ./.github/actions/rust-setup
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross && steps.check_asset.outputs.exists != 'true'
+        run: cargo install cross --git https://github.com/cross-rs/cross --force
+
+      - name: Build binary
+        id: build
+        if: steps.check_asset.outputs.exists != 'true'
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p burgertocow
+          else
+            cargo build --release --target ${{ matrix.target }} -p burgertocow
+          fi
+
+      - name: Package binary
+        id: package
+        if: always() && !cancelled() && steps.check_asset.outputs.exists != 'true' && steps.build.outcome == 'success'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/burgertocow dist/burgertocow
+          cd dist
+          tar -czvf ../${{ matrix.artifact }}.tar.gz burgertocow
+
+      - name: Upload to GitHub Release
+        if: always() && !cancelled() && steps.package.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="v${{ needs.create-release.outputs.version }}"
+          gh release upload "$TAG" "${{ matrix.artifact }}.tar.gz" --clobber
+
+  publish-crates:
+    needs: create-release
+    if: always() && !failure() && !cancelled()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: ./.github/actions/rust-setup
+
+      - name: Publish burgertocow-lib
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          cargo publish -p burgertocow-lib 2>&1 || {
+            if cargo search burgertocow-lib --limit 1 2>/dev/null | grep -q "burgertocow-lib.*\"$VERSION\""; then
+              echo "burgertocow-lib@$VERSION already published, skipping"
+            else
+              echo "Failed to publish burgertocow-lib"
+              exit 1
+            fi
+          }
+
+      - name: Wait for crates.io to index burgertocow-lib
+        run: sleep 30
+
+      - name: Publish burgertocow
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          cargo publish -p burgertocow 2>&1 || {
+            if cargo search burgertocow --limit 1 2>/dev/null | grep -q "burgertocow.*\"$VERSION\""; then
+              echo "burgertocow@$VERSION already published, skipping"
+            else
+              echo "Failed to publish burgertocow"
+              exit 1
+            fi
+          }

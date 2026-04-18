@@ -1,12 +1,14 @@
+use anyhow::{Context, Result};
+use burgertocow::{generate_diff, Tracker};
 use clap::{Parser, Subcommand};
 use std::fs;
-use burgertocow_lib::engine::Tracker;
-use burgertocow_lib::diff::generate_diff;
-use anyhow::Result;
 
 #[derive(Parser)]
-#[command(name = "burgertocow")]
-#[command(about = "Reverse minijinja template diff generator")]
+#[command(
+    name = "burgertocow",
+    version,
+    about = "Reverse minijinja template diff generator"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -14,6 +16,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Render a template with the given JSON context.
     Render {
         #[arg(long)]
         template: String,
@@ -22,6 +25,7 @@ enum Commands {
         #[arg(long)]
         out: String,
     },
+    /// Reverse-diff a modified render back against its source template.
     Diff {
         #[arg(long)]
         template: String,
@@ -34,32 +38,45 @@ enum Commands {
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    
+
     match &cli.command {
-        Commands::Render { template, data, out } => {
-            let t_str = fs::read_to_string(template)?;
-            let d_str = fs::read_to_string(data)?;
+        Commands::Render {
+            template,
+            data,
+            out,
+        } => {
+            let t_str = fs::read_to_string(template)
+                .with_context(|| format!("reading template {template}"))?;
+            let d_str = fs::read_to_string(data).with_context(|| format!("reading data {data}"))?;
             let ctx: serde_json::Value = serde_json::from_str(&d_str)?;
-            
+
             let mut tracker = Tracker::new();
-            let (pure, _tracked) = tracker.render(template, &t_str, &ctx)?;
-            
-            fs::write(out, pure)?;
-            println!("Rendered output written to {}", out);
+            tracker.add_template(template, &t_str)?;
+            let tracked = tracker.render(template, &ctx)?;
+
+            fs::write(out, tracked.output())?;
+            println!("Rendered output written to {out}");
         }
-        Commands::Diff { template, data, modified } => {
-            let t_str = fs::read_to_string(template)?;
-            let d_str = fs::read_to_string(data)?;
-            let m_str = fs::read_to_string(modified)?;
+        Commands::Diff {
+            template,
+            data,
+            modified,
+        } => {
+            let t_str = fs::read_to_string(template)
+                .with_context(|| format!("reading template {template}"))?;
+            let d_str = fs::read_to_string(data).with_context(|| format!("reading data {data}"))?;
+            let m_str = fs::read_to_string(modified)
+                .with_context(|| format!("reading modified {modified}"))?;
             let ctx: serde_json::Value = serde_json::from_str(&d_str)?;
-            
+
             let mut tracker = Tracker::new();
-            let (_pure, tracked) = tracker.render(template, &t_str, &ctx)?;
-            
+            tracker.add_template(template, &t_str)?;
+            let tracked = tracker.render(template, &ctx)?;
+
             let diff_str = generate_diff(&t_str, &tracked, &m_str);
-            print!("{}", diff_str);
+            print!("{diff_str}");
         }
     }
-    
+
     Ok(())
 }
