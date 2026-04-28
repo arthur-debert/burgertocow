@@ -21,3 +21,33 @@ burgertocow-lib = { path = "../burgertocow-lib", version = "0.1.0" }
 clap = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
+
+# cargo-deb configuration. Driven by `cargo deb -p burgertocow` in CI.
+# No maintainer scripts (debian/postinst, debian/prerm) — burgertocow has
+# no `completion --shell X print` CLI to register on configure, and no
+# other post-install state to manage.
+[package.metadata.deb]
+maintainer = "Arthur Debert <debert@gmail.com>"
+copyright = "2026, Arthur Debert <debert@gmail.com>"
+license-file = ["../../LICENSE", "0"]
+extended-description = """
+burgertocow reverse-engineers a diff on a rendered minijinja template
+back into template-level and variable-level changes via shadow rendering
++ LCS skeleton alignment. The CLI accepts a template, a variable bag,
+and an edited rendering, and outputs the inferred edits to either the
+template or the variables.
+"""
+section = "devel"
+priority = "optional"
+depends = "$auto"
+assets = [
+    # cargo-deb rewrites `target/release/` to `target/<triple>/release/`
+    # automatically when `--target` is passed (as CI does).
+    ["target/release/burgertocow", "usr/bin/", "755"],
+    ["../../README.md", "usr/share/doc/burgertocow/README.md", "644"],
+    ["../../CHANGELOG.md", "usr/share/doc/burgertocow/CHANGELOG.md", "644"],
+]
+
+# CI builds each architecture separately with --target.
+[package.metadata.deb.variants.amd64]
+[package.metadata.deb.variants.arm64]
