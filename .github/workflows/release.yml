@@ -390,31 +390,22 @@ jobs:
       - name: Setup Rust
         uses: ./.github/actions/rust-setup
 
+      # Use scripts/ci-publish-crate.sh for the robust two-tier check:
+      # 1. Pre-check via crates.io JSON API (skips re-publish entirely)
+      # 2. Grep cargo's publish output for "already exists"/"already uploaded"
+      # The prior `cargo search VERSION grep` heuristic was broken for
+      # re-running an older rc — `cargo search` returns only the LATEST
+      # version, so the grep wouldn't match older ones.
       - name: Publish crates to crates.io
         env:
-          VERSION: ${{ needs.prepare-release.outputs.version }}
           CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
         run: |
-          publish_one() {
-            local crate="$1"
-            echo "=== Publishing $crate@$VERSION ==="
-            if cargo publish -p "$crate" 2>&1; then
-              return 0
-            fi
-            if cargo search "$crate" --limit 1 2>/dev/null | grep -q "^$crate = \"$VERSION\""; then
-              echo "$crate@$VERSION already on crates.io, skipping."
-              return 0
-            fi
-            echo "Failed to publish $crate@$VERSION"
-            return 1
-          }
-
           for crate in $EXTRA_CRATES; do
-            publish_one "$crate"
+            scripts/ci-publish-crate.sh "$crate"
             echo "Waiting ${PUBLISH_WAIT_SECONDS}s for crates.io index..."
             sleep "$PUBLISH_WAIT_SECONDS"
           done
-          publish_one "$CRATE_NAME"
+          scripts/ci-publish-crate.sh "$CRATE_NAME"
 
   homebrew-formula:
     needs: [prepare-release, build-binaries]
