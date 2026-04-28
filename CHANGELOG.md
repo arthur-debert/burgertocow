@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-28
+
 ### Changed
 
 - **Releases now run end-to-end in CI via `scripts/release`.** Triggering a release with `scripts/release <version|major|minor|patch>` queues a `workflow_dispatch` run that performs the version bump, `## [Unreleased]` roll, commit, tag, GitHub Release, multi-platform build (mac arm64 signed+notarized, linux x86_64+arm64), `.deb` attach, crates.io publish (burgertocow-lib then burgertocow), and Homebrew formula push to `arthur-debert/homebrew-tools` — all in CI. Replaces the previous tag-push trigger model.
