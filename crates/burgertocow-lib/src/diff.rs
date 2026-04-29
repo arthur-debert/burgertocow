@@ -299,7 +299,12 @@ enum Mapped {
 /// Equivalent to calling [`generate_diff_with_markers`] with
 /// [`ConflictMarkers::default`].
 pub fn generate_diff(template_src: &str, tracked: &TrackedRender, modified_src: &str) -> String {
-    generate_diff_with_markers(template_src, tracked, modified_src, &ConflictMarkers::default())
+    generate_diff_with_markers(
+        template_src,
+        tracked,
+        modified_src,
+        &ConflictMarkers::default(),
+    )
 }
 
 /// Compute a unified diff expressed against the source template, using
