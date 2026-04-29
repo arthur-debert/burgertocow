@@ -279,8 +279,7 @@ fn multi_line_secret_rotation_produces_empty_diff() {
     // Rotating a multi-line secret must still be classified as a pure
     // data change. This is the stress test for marker-span tracking over
     // newlines.
-    let old_pem =
-        "-----BEGIN KEY-----\nline1-old\nline2-old\n-----END KEY-----";
+    let old_pem = "-----BEGIN KEY-----\nline1-old\nline2-old\n-----END KEY-----";
     let values = Arc::new(Mutex::new(HashMap::from([(
         "op://SSH/key".to_string(),
         old_pem.to_string(),
@@ -290,8 +289,7 @@ fn multi_line_secret_rotation_produces_empty_diff() {
     tracker.add_template("t", src).unwrap();
     let tracked = tracker.render("t", serde_json::json!({})).unwrap();
 
-    let new_pem =
-        "-----BEGIN KEY-----\nline1-NEW\nline2-NEW-LONGER\nline3-NEW\n-----END KEY-----";
+    let new_pem = "-----BEGIN KEY-----\nline1-NEW\nline2-NEW-LONGER\nline3-NEW\n-----END KEY-----";
     let modified = format!("KEY<<EOF\n{new_pem}\nEOF\n");
     let diff = generate_diff(src, &tracked, &modified);
     assert_eq!(
