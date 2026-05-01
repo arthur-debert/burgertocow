@@ -173,6 +173,30 @@ impl TrackedRender {
         Self { output, tracked }
     }
 
+    /// Rehydrate a `TrackedRender` from a previously-saved tracked string.
+    ///
+    /// Callers that persist the output of [`tracked`](Self::tracked) (for
+    /// example, a cache that wants to invoke
+    /// [`generate_diff`](crate::generate_diff) against a stored render
+    /// without re-running the template) can rebuild the in-memory form via
+    /// this constructor. The plain `output` is recomputed by stripping
+    /// marker characters, so callers don't need to persist it separately.
+    ///
+    /// This is the inverse of [`tracked`](Self::tracked): for any
+    /// `TrackedRender` produced by [`Tracker::render`],
+    /// `TrackedRender::from_tracked_string(r.tracked().to_owned())` yields
+    /// a value with the same `output()` and `tracked()`.
+    ///
+    /// The input is trusted — the constructor does not validate marker
+    /// balance. A `tracked` string with mismatched [`VAR_START`] /
+    /// [`VAR_END`] markers will produce a `TrackedRender` that still
+    /// renders sensibly (markers are stripped) but whose use as input to
+    /// the diff pipeline will yield ambiguous results. Cache layers
+    /// should preserve the string verbatim from the original render.
+    pub fn from_tracked_string(tracked: String) -> Self {
+        Self::from_tracked(tracked)
+    }
+
     /// The rendered output with tracking markers stripped.
     pub fn output(&self) -> &str {
         &self.output
@@ -249,6 +273,52 @@ mod tests {
         assert_eq!(r.output(), "abc");
         assert_eq!(r.tracked().matches(VAR_START).count(), 3);
         assert_eq!(r.tracked().matches(VAR_END).count(), 3);
+    }
+
+    #[test]
+    fn from_tracked_string_round_trips_render() {
+        // The use case: a downstream cache stores the tracked string from
+        // an earlier render, then later wants to feed it into the diff
+        // pipeline without re-rendering. Round-trip via the public
+        // constructor must reproduce both `output` and `tracked` exactly.
+        let mut t = Tracker::new();
+        t.add_template("x", "Hello {{ name }}, {{ count }} items")
+            .unwrap();
+        let original = t.render("x", json!({"name": "Ada", "count": 3})).unwrap();
+
+        let cached = original.tracked().to_owned();
+        let rehydrated = TrackedRender::from_tracked_string(cached);
+
+        assert_eq!(rehydrated.output(), original.output());
+        assert_eq!(rehydrated.tracked(), original.tracked());
+        // Marker count is preserved.
+        assert_eq!(
+            rehydrated.tracked().matches(VAR_START).count(),
+            original.tracked().matches(VAR_START).count()
+        );
+    }
+
+    #[test]
+    fn from_tracked_string_drives_generate_diff() {
+        // End-to-end: rehydrate from a cached tracked string and pass the
+        // result into `generate_diff` — no re-render involved.
+        use crate::generate_diff;
+
+        let template = "name = {{ user }}\ncount = 1\n";
+        let mut t = Tracker::new();
+        t.add_template("c", template).unwrap();
+        let original = t.render("c", json!({"user": "Ada"})).unwrap();
+
+        let cached = original.tracked().to_owned();
+        let rehydrated = TrackedRender::from_tracked_string(cached);
+
+        // Static-line edit: should produce a non-empty diff against the
+        // template (the rehydrated render is functionally equivalent).
+        let modified = "name = Ada\ncount = 99\n";
+        let diff_orig = generate_diff(template, &original, modified);
+        let diff_rehydrated = generate_diff(template, &rehydrated, modified);
+        assert_eq!(diff_orig, diff_rehydrated);
+        assert!(!diff_rehydrated.is_empty());
     }
 
     #[test]

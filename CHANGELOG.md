@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-01
+
+### Added
+
+- **`TrackedRender::from_tracked_string`** — public constructor that rehydrates a `TrackedRender` from a previously-saved tracked string. Enables cache-backed reverse-diff: callers can persist `tracked()` output, then later feed it back into `generate_diff` without re-rendering. Useful for tools (like dodot's clean filter) that need to compute reverse-diffs on every git read but can't afford to re-evaluate templates that touch secret providers or expensive contexts.
+
 ## [0.2.0] - 2026-04-28
 
 ### Changed
