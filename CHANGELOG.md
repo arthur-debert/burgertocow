@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-02
+
+
 ### Added
 
 - **`generate_diff_with_markers_opts` + `DiffOptions`** — new entry point
@@ -24,7 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ranges clamp silently; overlapping ranges merge. The legacy
   `generate_diff_with_markers` is unchanged and remains a thin wrapper
   that builds an empty mask. (#13)
-
 ## [0.3.1] - 2026-05-01
 
 
