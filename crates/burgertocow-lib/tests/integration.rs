@@ -897,6 +897,52 @@ fn mask_multi_line_secret_block_yields_unchanged_on_rotation() {
     assert!(!diff.contains("NEW-line-2"));
 }
 
+/// Stale-sidecar safety net — when a masked deployed-line index points
+/// past the end of the cached render (the render shrank but the
+/// sidecar didn't catch up), the deployed line stays in the rebuilt
+/// stream rather than being silently dropped. The reverse diff then
+/// surfaces the unmatched edit so the caller can investigate, instead
+/// of returning a misleading empty diff.
+///
+/// This is the contract Copilot review on PR #14 pointed out, and the
+/// reason `apply_deployed_mask` does not drop unmatched lines.
+#[test]
+fn mask_with_stale_sidecar_surfaces_unmatched_deployed_lines() {
+    let mut tracker = Tracker::new();
+    // Render is 2 lines. Sidecar (mask) was generated against an older
+    // 4-line render and still points at lines 2..3.
+    let src = "name = {{ n }}\nrole = {{ r }}\n";
+    tracker.add_template("t", src).unwrap();
+    let tracked = tracker
+        .render("t", serde_json::json!({"n": "svc", "r": "primary"}))
+        .unwrap();
+
+    // Deployed has 4 lines — extra trailing content the user actually
+    // wrote. The stale sidecar masks the third line (index 2), but
+    // pure_render only has 2 lines, so the third deployed line has no
+    // counterpart in the render.
+    let deployed = "name = svc\nrole = primary\n# user added comment\nextra-line\n";
+    let markers = ConflictMarkers::default();
+    let mask = [2..3];
+    let diff = generate_diff_with_markers_opts(
+        src,
+        &tracked,
+        deployed,
+        &DiffOptions::new(&markers).with_mask(&mask),
+    );
+    // The unmatched deployed line must surface in the diff (either as
+    // a unified-diff addition or as a conflict block) — it must NOT
+    // silently disappear.
+    assert!(
+        !diff.is_empty(),
+        "stale-sidecar mask must not produce a misleading empty diff"
+    );
+    assert!(
+        diff.contains("user added comment") || diff.contains("extra-line"),
+        "expected the unmatched deployed content to surface; got: {diff}"
+    );
+}
+
 /// Multi-line secret rotation where the new value has FEWER lines than
 /// the old. The mask covers the deployed lines that do exist; the
 /// "missing" rendered lines fall outside the mask and surface as a

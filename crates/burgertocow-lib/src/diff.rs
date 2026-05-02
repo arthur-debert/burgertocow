@@ -146,6 +146,11 @@ pub struct DiffOptions<'a> {
     /// re-rendered file does not panic. Overlapping or out-of-order
     /// ranges are merged.
     ///
+    /// If a masked deployed-line index has no corresponding line in
+    /// the cached render (the render shrank under a stale sidecar),
+    /// the deployed line is left intact rather than dropped — that
+    /// surfaces the unmatched edit instead of silently hiding it.
+    ///
     /// An empty slice (the default) makes the call behave byte-identical
     /// to [`generate_diff_with_markers`] — this property is the
     /// regression test that pins backward compatibility.
@@ -671,9 +676,12 @@ fn split_keep_endings(s: &str) -> Vec<&str> {
 /// Build a synthetic deployed string where every masked deployed-line
 /// index is replaced with the rendered (`pure_render`) line at the same
 /// index. If the rendered output has no such line (the mask points past
-/// EOF of the render), the deployed line is dropped: the rebuilt deployed
-/// then matches "no change at this position" against the render, which is
-/// the only safe interpretation of "treat as if it always matched".
+/// EOF of the render — a stale sidecar that hasn't caught up to the
+/// current render), the deployed line is left intact rather than
+/// dropped. Dropping would silently swallow user-visible content and
+/// turn a stale-sidecar bug into a "diff is empty" lie; preserving the
+/// line surfaces the unmatched edit so the caller sees something is
+/// off.
 ///
 /// Out-of-bounds masked ranges are clamped to the deployed line count.
 /// Overlapping ranges are merged. Empty (`r.start == r.end` after
@@ -708,12 +716,12 @@ fn apply_deployed_mask(pure_render: &str, deployed: &str, ranges: &[Range<usize>
         for line in &deployed_lines[cursor..r.start] {
             out.push_str(line);
         }
-        for idx in r.start..r.end {
-            if let Some(line) = pure_lines.get(idx) {
-                out.push_str(line);
-            } else {
-                out.push_str(deployed_lines[idx]);
-            }
+        for (offset, deployed_line) in deployed_lines[r.start..r.end].iter().enumerate() {
+            let line = pure_lines
+                .get(r.start + offset)
+                .copied()
+                .unwrap_or(deployed_line);
+            out.push_str(line);
         }
         cursor = r.end;
     }
@@ -968,14 +976,17 @@ mod tests {
     }
 
     #[test]
-    fn apply_deployed_mask_drops_lines_when_pure_is_shorter() {
+    fn apply_deployed_mask_keeps_deployed_when_pure_is_shorter() {
         // Mask points at deployed line whose index does not exist in
-        // pure. The deployed line is dropped (replaced with nothing) so
-        // the rebuilt deployed has no entry at that position.
+        // pure (stale sidecar — dodot's secret span shifted under the
+        // current render). We leave the deployed line intact rather
+        // than dropping it: dropping would silently swallow real
+        // content the user can see, hiding what is in fact an
+        // unmatched edit. Surfacing it keeps the diff honest.
         let pure = "a\n";
         let deployed = "a\nB\nC\n";
         let out = apply_deployed_mask(pure, deployed, &[1..3]);
-        assert_eq!(out, "a\n");
+        assert_eq!(out, "a\nB\nC\n");
     }
 
     #[test]
