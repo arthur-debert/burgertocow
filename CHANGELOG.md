@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`generate_diff_with_markers_opts` + `DiffOptions`** — new entry point
+  that accepts a `DiffOptions` struct carrying the conflict markers and
+  an optional list of deployed-file line ranges to mask out of the
+  reverse-diff. Masked lines are treated as if they always matched the
+  cached render, regardless of actual content. The motivating use case
+  is dodot's `secret()` integration: lines populated from a vault must
+  not participate in template-space diffing (otherwise a vault rotation
+  or a hand-edited secret line would rewrite the template's
+  `{{ secret(...) }}` expression to a literal value, defeating the
+  abstraction). The mechanism is general — any deployed-file line whose
+  source-of-truth lives outside the deployed bytes (machine overrides,
+  timestamp banners, etc.) can be masked the same way. Out-of-bounds
+  ranges clamp silently; overlapping ranges merge. The legacy
+  `generate_diff_with_markers` is unchanged and remains a thin wrapper
+  that builds an empty mask. (#13)
+
 ## [0.3.1] - 2026-05-01
 
 

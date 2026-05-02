@@ -36,6 +36,8 @@
 use crate::engine::{TrackedRender, VAR_END, VAR_START};
 use crate::parser::*;
 use similar::{capture_diff_slices, Algorithm, DiffOp, TextDiff};
+use std::borrow::Cow;
+use std::ops::Range;
 
 pub const CONFLICT_START: &str =
     "<<<< diff decision needed: start >>>>\n# the original template contained:\n";
@@ -85,6 +87,100 @@ impl<'a> ConflictMarkers<'a> {
     /// Construct a marker set from three caller-owned strings.
     pub const fn new(start: &'a str, mid: &'a str, end: &'a str) -> Self {
         Self { start, mid, end }
+    }
+}
+
+/// Per-call knobs for [`generate_diff_with_markers_opts`].
+///
+/// Built explicitly rather than threaded into the existing entry point so
+/// future options (e.g. relaxing the conflict-marker policy on a single
+/// invocation) can be added without another revision of the public
+/// signature. The current legacy entry point
+/// [`generate_diff_with_markers`] is a thin wrapper that builds a
+/// `DiffOptions` with an empty mask.
+///
+/// # Example
+///
+/// ```no_run
+/// use burgertocow::{generate_diff_with_markers_opts, ConflictMarkers, DiffOptions, Tracker};
+///
+/// let mut tracker = Tracker::new();
+/// tracker.add_template("t", "name = {{ user }}\npassword = {{ secret }}\n").unwrap();
+/// let tracked = tracker.render(
+///     "t",
+///     serde_json::json!({"user": "Ada", "secret": "OLD"}),
+/// ).unwrap();
+///
+/// let markers = ConflictMarkers::default();
+/// // dodot's sidecar says: deployed line 1 (the password line) is a secret.
+/// let mask = [1..2];
+/// let opts = DiffOptions::new(&markers).with_mask(&mask);
+///
+/// // Even though the deployed file's secret value rotated, the diff is
+/// // empty because the masked line is treated as unchanged.
+/// let deployed = "name = Ada\npassword = NEW_ROTATED\n";
+/// let diff = generate_diff_with_markers_opts(
+///     "name = {{ user }}\npassword = {{ secret }}\n",
+///     &tracked,
+///     deployed,
+///     &opts,
+/// );
+/// assert_eq!(diff, "");
+/// ```
+#[derive(Debug, Clone)]
+pub struct DiffOptions<'a> {
+    /// Conflict-block boundary markers; see [`ConflictMarkers`].
+    pub markers: &'a ConflictMarkers<'a>,
+
+    /// Deployed-file line ranges that should not participate in reverse
+    /// diffing. burgertocow treats these lines as if they matched the
+    /// cached render, regardless of actual content.
+    ///
+    /// Ranges are 0-based half-open `Range<usize>` (inclusive start,
+    /// exclusive end). Line breaks are counted at `\n` boundaries — a
+    /// file `"a\nb\nc\n"` has three lines (indices 0, 1, 2). The final
+    /// line need not end in `\n`.
+    ///
+    /// Out-of-bounds ranges are clamped silently to the deployed file's
+    /// line count so a stale sidecar that trails off the end of a
+    /// re-rendered file does not panic. Overlapping or out-of-order
+    /// ranges are merged.
+    ///
+    /// An empty slice (the default) makes the call behave byte-identical
+    /// to [`generate_diff_with_markers`] — this property is the
+    /// regression test that pins backward compatibility.
+    ///
+    /// # Interaction with conflict blocks
+    ///
+    /// If a conflict would have been emitted for a region that straddles
+    /// a masked range, only the unmasked portion contributes to the
+    /// conflict; if the entire conflict falls inside masked content, no
+    /// block is emitted (and if it was the only change, the result is the
+    /// empty string).
+    ///
+    /// # Tracking markers inside masked content
+    ///
+    /// The masking decision uses the deployed-line index only. Whether
+    /// the corresponding `tracked_render` content carries [`VAR_START`] /
+    /// [`VAR_END`] markers from prior renders is irrelevant.
+    pub mask_deployed_lines: &'a [Range<usize>],
+}
+
+impl<'a> DiffOptions<'a> {
+    /// Construct a `DiffOptions` with the given markers and an empty
+    /// mask. With no mask set, the call behaves byte-identical to
+    /// [`generate_diff_with_markers`].
+    pub const fn new(markers: &'a ConflictMarkers<'a>) -> Self {
+        Self {
+            markers,
+            mask_deployed_lines: &[],
+        }
+    }
+
+    /// Replace the mask slice. Chains in builder style.
+    pub const fn with_mask(mut self, mask: &'a [Range<usize>]) -> Self {
+        self.mask_deployed_lines = mask;
+        self
     }
 }
 
@@ -313,12 +409,59 @@ pub fn generate_diff(template_src: &str, tracked: &TrackedRender, modified_src: 
 /// Behaves identically to [`generate_diff`] except that any conflict block
 /// emitted uses the strings from `markers`. Non-conflict output (unified
 /// diffs and empty strings for pure-data changes) is unaffected.
+///
+/// Equivalent to calling [`generate_diff_with_markers_opts`] with
+/// `DiffOptions::new(markers)` (i.e. an empty mask).
 pub fn generate_diff_with_markers(
     template_src: &str,
     tracked: &TrackedRender,
     modified_src: &str,
     markers: &ConflictMarkers<'_>,
 ) -> String {
+    generate_diff_with_markers_opts(
+        template_src,
+        tracked,
+        modified_src,
+        &DiffOptions::new(markers),
+    )
+}
+
+/// Compute a unified diff expressed against the source template, with
+/// caller-supplied conflict markers and optional masking of deployed-file
+/// line ranges.
+///
+/// Lines listed in [`DiffOptions::mask_deployed_lines`] are treated as if
+/// they always matched the cached render: regardless of their actual
+/// content in `deployed`, no template-space change is generated for them.
+/// Lines outside the mask diff normally.
+///
+/// With an empty mask this function behaves byte-identical to
+/// [`generate_diff_with_markers`] — that round-trip is exercised in the
+/// integration test suite.
+///
+/// # Mask semantics
+///
+/// See [`DiffOptions::mask_deployed_lines`] for line-numbering rules,
+/// out-of-bounds clamping, overlap merging, and conflict-block
+/// interaction.
+pub fn generate_diff_with_markers_opts(
+    template_src: &str,
+    tracked: &TrackedRender,
+    deployed: &str,
+    opts: &DiffOptions<'_>,
+) -> String {
+    let masked: Cow<'_, str> = if opts.mask_deployed_lines.is_empty() {
+        Cow::Borrowed(deployed)
+    } else {
+        Cow::Owned(apply_deployed_mask(
+            tracked.output(),
+            deployed,
+            opts.mask_deployed_lines,
+        ))
+    };
+    let modified_src: &str = masked.as_ref();
+    let markers = opts.markers;
+
     let t_chars: Vec<char> = template_src.chars().collect();
     let mod_chars: Vec<char> = modified_src.chars().collect();
     let tracked_chars: Vec<char> = tracked.tracked().chars().collect();
@@ -503,6 +646,81 @@ fn detect_duplicate_conflicts(mapped_ops: &mut [Mapped]) {
     }
 }
 
+/// Split `s` into lines, keeping each line's trailing `\n` byte if any.
+///
+/// Used by the masking pipeline so substituted lines preserve their
+/// original line-termination state. Pure ASCII split — `\r\n` and bare
+/// `\r` are not treated as line breaks (matching the rest of the diff
+/// pipeline, which counts breaks at `\n` only).
+fn split_keep_endings(s: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let bytes = s.as_bytes();
+    let mut start = 0;
+    for i in 0..bytes.len() {
+        if bytes[i] == b'\n' {
+            out.push(&s[start..=i]);
+            start = i + 1;
+        }
+    }
+    if start < s.len() {
+        out.push(&s[start..]);
+    }
+    out
+}
+
+/// Build a synthetic deployed string where every masked deployed-line
+/// index is replaced with the rendered (`pure_render`) line at the same
+/// index. If the rendered output has no such line (the mask points past
+/// EOF of the render), the deployed line is dropped: the rebuilt deployed
+/// then matches "no change at this position" against the render, which is
+/// the only safe interpretation of "treat as if it always matched".
+///
+/// Out-of-bounds masked ranges are clamped to the deployed line count.
+/// Overlapping ranges are merged. Empty (`r.start == r.end` after
+/// clamping) ranges are dropped.
+///
+/// Caller is expected to short-circuit with the original `deployed` when
+/// `ranges` is empty so we don't pay the allocation cost in the common
+/// case.
+fn apply_deployed_mask(pure_render: &str, deployed: &str, ranges: &[Range<usize>]) -> String {
+    let deployed_lines = split_keep_endings(deployed);
+    let pure_lines = split_keep_endings(pure_render);
+    let n = deployed_lines.len();
+
+    let mut clamped: Vec<Range<usize>> = ranges
+        .iter()
+        .map(|r| (r.start.min(n))..(r.end.min(n)))
+        .filter(|r| r.start < r.end)
+        .collect();
+    clamped.sort_by_key(|r| r.start);
+
+    let mut merged: Vec<Range<usize>> = Vec::with_capacity(clamped.len());
+    for r in clamped {
+        match merged.last_mut() {
+            Some(last) if r.start <= last.end => last.end = last.end.max(r.end),
+            _ => merged.push(r),
+        }
+    }
+
+    let mut out = String::with_capacity(deployed.len());
+    let mut cursor = 0usize;
+    for r in merged {
+        for line in &deployed_lines[cursor..r.start] {
+            out.push_str(line);
+        }
+        for idx in r.start..r.end {
+            if let Some(line) = pure_lines.get(idx) {
+                out.push_str(line);
+            }
+        }
+        cursor = r.end;
+    }
+    for line in &deployed_lines[cursor..n] {
+        out.push_str(line);
+    }
+    out
+}
+
 fn format_conflict(
     t_chars: &[char],
     anchor: usize,
@@ -528,6 +746,7 @@ fn format_conflict(
 }
 
 #[cfg(test)]
+#[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use super::*;
     use crate::engine::Tracker;
@@ -657,5 +876,207 @@ mod tests {
         // Insert between 'a' and 'b' — the comment collapses to nothing
         // in the render, so the template position is between a and b.
         assert!(d.contains("+") || !d.is_empty());
+    }
+
+    // -----------------------------------------------------------------
+    // Masking helpers — split_keep_endings + apply_deployed_mask.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn split_keep_endings_basic_shapes() {
+        assert!(split_keep_endings("").is_empty());
+        assert_eq!(split_keep_endings("a"), vec!["a"]);
+        assert_eq!(split_keep_endings("a\n"), vec!["a\n"]);
+        assert_eq!(split_keep_endings("a\nb"), vec!["a\n", "b"]);
+        assert_eq!(split_keep_endings("a\nb\n"), vec!["a\n", "b\n"]);
+        assert_eq!(split_keep_endings("\n"), vec!["\n"]);
+        assert_eq!(split_keep_endings("a\n\nb"), vec!["a\n", "\n", "b"]);
+    }
+
+    #[test]
+    fn split_keep_endings_concat_round_trip() {
+        // Joining the split is byte-identical to the original. Important
+        // because the masking pipeline relies on this to leave non-masked
+        // regions untouched.
+        for s in [
+            "",
+            "a",
+            "a\n",
+            "a\nb",
+            "a\nb\n",
+            "\n\n\n",
+            "a\n\nb\n",
+            "日本\nWorld\n",
+        ] {
+            let lines = split_keep_endings(s);
+            let rebuilt: String = lines.concat();
+            assert_eq!(rebuilt, s, "round-trip lost bytes for {s:?}");
+        }
+    }
+
+    #[test]
+    fn apply_deployed_mask_replaces_single_line() {
+        let pure = "a\nB\nc\n";
+        let deployed = "a\nX\nc\n";
+        let out = apply_deployed_mask(pure, deployed, &[1..2]);
+        assert_eq!(out, "a\nB\nc\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_no_op_outside_range() {
+        // Lines outside the mask are byte-preserved from `deployed`.
+        let pure = "PURE-a\nPURE-b\nPURE-c\n";
+        let deployed = "DEP-a\nPURE-b\nDEP-c\n";
+        let out = apply_deployed_mask(pure, deployed, &[1..2]);
+        assert_eq!(out, "DEP-a\nPURE-b\nDEP-c\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_clamps_out_of_bounds() {
+        let pure = "a\nb\nc\n";
+        let deployed = "a\nX\nc\n";
+        // Range trails past EOF — clamp end to 3.
+        let out = apply_deployed_mask(pure, deployed, &[1..1000]);
+        assert_eq!(out, "a\nb\nc\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_clamps_entirely_out_of_bounds_to_noop() {
+        let pure = "a\nb\nc\n";
+        let deployed = "a\nb\nc\n";
+        let out = apply_deployed_mask(pure, deployed, &[10..20]);
+        assert_eq!(out, "a\nb\nc\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_merges_overlapping_ranges() {
+        let pure = "a\nb\nc\nd\ne\n";
+        let deployed = "a\nX\nY\nZ\ne\n";
+        let out = apply_deployed_mask(pure, deployed, &[1..3, 2..4]);
+        assert_eq!(out, "a\nb\nc\nd\ne\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_handles_unsorted_input() {
+        // Sidecar order is not contractual; sort and merge defensively.
+        let pure = "a\nb\nc\nd\ne\n";
+        let deployed = "a\nX\nc\nY\ne\n";
+        let out = apply_deployed_mask(pure, deployed, &[3..4, 1..2]);
+        assert_eq!(out, "a\nb\nc\nd\ne\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_drops_lines_when_pure_is_shorter() {
+        // Mask points at deployed line whose index does not exist in
+        // pure. The deployed line is dropped (replaced with nothing) so
+        // the rebuilt deployed has no entry at that position.
+        let pure = "a\n";
+        let deployed = "a\nB\nC\n";
+        let out = apply_deployed_mask(pure, deployed, &[1..3]);
+        assert_eq!(out, "a\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_preserves_trailing_newline_state_per_line() {
+        // pure has trailing \n on last line; deployed does not. Mask the
+        // last line — rebuild adopts pure's trailing-newline state.
+        let pure = "a\nb\n";
+        let deployed = "a\nB";
+        let out = apply_deployed_mask(pure, deployed, &[1..2]);
+        assert_eq!(out, "a\nb\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_drops_empty_ranges() {
+        let pure = "a\nb\nc\n";
+        let deployed = "a\nX\nc\n";
+        // r.start == r.end after clamping → dropped silently.
+        let out = apply_deployed_mask(pure, deployed, &[2..2, 0..0]);
+        assert_eq!(out, "a\nX\nc\n");
+    }
+
+    #[test]
+    fn apply_deployed_mask_handles_unicode_line_content() {
+        let pure = "日本\nb\nc\n";
+        let deployed = "日本\nX\nc\n";
+        let out = apply_deployed_mask(pure, deployed, &[1..2]);
+        assert_eq!(out, "日本\nb\nc\n");
+    }
+
+    // -----------------------------------------------------------------
+    // generate_diff_with_markers_opts wiring.
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn opts_empty_mask_matches_legacy_entry() {
+        // The byte-identity backstop: with an empty mask, the new entry
+        // point must produce exactly what `generate_diff_with_markers`
+        // would have produced. This is the regression test that pins
+        // backward compatibility for downstream callers.
+        let mut t = Tracker::new();
+        t.add_template("t", "Hello {{ u }}!\nBye.").unwrap();
+        let r = t.render("t", json!({"u": "A"})).unwrap();
+        let modified = "Hello A!\nBye for now.";
+        let markers = ConflictMarkers::default();
+        let legacy = generate_diff_with_markers("Hello {{ u }}!\nBye.", &r, modified, &markers);
+        let opts_empty = generate_diff_with_markers_opts(
+            "Hello {{ u }}!\nBye.",
+            &r,
+            modified,
+            &DiffOptions::new(&markers),
+        );
+        assert_eq!(legacy, opts_empty);
+    }
+
+    #[test]
+    fn opts_with_mask_drops_inside_edits_only() {
+        // Two-line file: line 0 is plaintext (with a static-text change),
+        // line 1 is a "secret" line whose deployed value also rotated.
+        // With line 1 masked, only the static-text edit on line 0 should
+        // propagate to the template diff.
+        let template = "host = {{ h }}\npassword = {{ p }}\n";
+        let mut t = Tracker::new();
+        t.add_template("t", template).unwrap();
+        let r = t
+            .render("t", json!({"h": "localhost", "p": "OLD"}))
+            .unwrap();
+        // User renamed the static "host" → "hostname" AND the secret
+        // line's value rotated. Mask covers only the secret line.
+        let deployed = "hostname = localhost\npassword = NEW\n";
+        let markers = ConflictMarkers::default();
+        let mask = [1..2];
+        let d = generate_diff_with_markers_opts(
+            template,
+            &r,
+            deployed,
+            &DiffOptions::new(&markers).with_mask(&mask),
+        );
+        assert!(d.contains("-host = {{ h }}"), "host diff missing: {d}");
+        assert!(
+            d.contains("+hostname = {{ h }}"),
+            "hostname diff missing: {d}"
+        );
+        // The masked rotated value must not have leaked into the diff.
+        assert!(!d.contains("NEW"), "masked value leaked: {d}");
+    }
+
+    #[test]
+    fn opts_mask_covers_all_changed_lines_yields_empty_diff() {
+        // Vault rotation simulated: the ONLY edit is on the secret line.
+        // Mask covers it, diff is empty.
+        let mut t = Tracker::new();
+        t.add_template("t", "name = {{ n }}\nsecret = {{ s }}\n")
+            .unwrap();
+        let r = t.render("t", json!({"n": "Ada", "s": "OLD"})).unwrap();
+        let deployed = "name = Ada\nsecret = NEW_ROTATED\n";
+        let markers = ConflictMarkers::default();
+        let mask = [1..2];
+        let d = generate_diff_with_markers_opts(
+            "name = {{ n }}\nsecret = {{ s }}\n",
+            &r,
+            deployed,
+            &DiffOptions::new(&markers).with_mask(&mask),
+        );
+        assert_eq!(d, "");
     }
 }
