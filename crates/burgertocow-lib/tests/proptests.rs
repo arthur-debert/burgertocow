@@ -6,9 +6,12 @@
 //! minijinja templates with full operator coverage under proptest is
 //! difficult) but each property catches a real class of regression.
 
-use burgertocow::{generate_diff, Tracker};
+use burgertocow::{
+    generate_diff, generate_diff_with_markers_opts, ConflictMarkers, DiffOptions, Tracker,
+};
 use proptest::prelude::*;
 use serde_json::json;
+use std::ops::Range;
 
 /// Generate a "static text" string that can appear around template tags.
 /// We use letters/symbols that are disjoint from [`var_value`]'s alphabet
@@ -195,5 +198,68 @@ proptest! {
         let ends = r.tracked().matches('\u{1F}').count();
         prop_assert_eq!(starts, 1);
         prop_assert_eq!(ends, 1);
+    }
+
+    // Mask invariant — empty mask is byte-identical to the legacy
+    // entry. Any (template, ctx, deployed) triple that the original
+    // pipeline accepts must yield exactly the same string when run
+    // through `_opts` with `DiffOptions::new(&markers)`. This is the
+    // backward-compat backstop the issue calls out.
+    #[test]
+    fn mask_empty_matches_legacy_for_any_input(
+        (template, _, ctx) in template_and_ctx(),
+        deployed in static_text(),
+    ) {
+        let Some(r) = render(&template, &ctx) else { return Ok(()); };
+        let markers = ConflictMarkers::default();
+        let legacy = generate_diff(&template, &r, &deployed);
+        let opts_diff = generate_diff_with_markers_opts(
+            &template,
+            &r,
+            &deployed,
+            &DiffOptions::new(&markers),
+        );
+        prop_assert_eq!(legacy, opts_diff);
+    }
+
+    // Mask invariant — when the deployed bytes equal the rendered
+    // output, ANY mask (including OOB / overlapping / empty / single-
+    // line) must yield an empty diff. This holds because the mask
+    // substitution can only ever bring the deployed closer to pure,
+    // and starting from `deployed == pure` it cannot push it apart.
+    #[test]
+    fn mask_with_deployed_equal_to_render_yields_empty_diff(
+        (template, _, ctx) in template_and_ctx(),
+        ranges in proptest::collection::vec((0usize..20, 0usize..20), 0..6),
+    ) {
+        let Some(r) = render(&template, &ctx) else { return Ok(()); };
+        let mask: Vec<Range<usize>> = ranges
+            .into_iter()
+            .map(|(a, b)| a.min(b)..a.max(b))
+            .collect();
+        let markers = ConflictMarkers::default();
+        let opts = DiffOptions::new(&markers).with_mask(&mask);
+        let d = generate_diff_with_markers_opts(&template, &r, r.output(), &opts);
+        prop_assert_eq!(d, "");
+    }
+
+    // Mask never panics — even on adversarial mask shapes (huge OOB,
+    // overlapping, zero-width, unsorted) combined with adversarial
+    // deployed text. Same rough-edges concern as `generate_diff_never_panics`
+    // but now with the masking pipeline in front.
+    #[test]
+    fn mask_never_panics(
+        (template, _, ctx) in template_and_ctx(),
+        deployed in static_text(),
+        ranges in proptest::collection::vec((0usize..200, 0usize..200), 0..8),
+    ) {
+        let Some(r) = render(&template, &ctx) else { return Ok(()); };
+        let mask: Vec<Range<usize>> = ranges
+            .into_iter()
+            .map(|(a, b)| a.min(b)..a.max(b))
+            .collect();
+        let markers = ConflictMarkers::default();
+        let opts = DiffOptions::new(&markers).with_mask(&mask);
+        let _ = generate_diff_with_markers_opts(&template, &r, &deployed, &opts);
     }
 }
