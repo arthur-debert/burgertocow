@@ -711,6 +711,8 @@ fn apply_deployed_mask(pure_render: &str, deployed: &str, ranges: &[Range<usize>
         for idx in r.start..r.end {
             if let Some(line) = pure_lines.get(idx) {
                 out.push_str(line);
+            } else {
+                out.push_str(deployed_lines[idx]);
             }
         }
         cursor = r.end;
