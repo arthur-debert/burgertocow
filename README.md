@@ -193,16 +193,18 @@ The project has three layers of tests:
 Run the same checks CI runs locally:
 
 ```bash
-scripts/check         # fmt + clippy + tests
-scripts/check-fmt     # rustfmt --check
-scripts/check-lint    # clippy -D warnings
-scripts/check-tests   # nextest (or cargo test)
+bin/check         # fmt + clippy + tests
+bin/check-fmt     # rustfmt --check
+bin/check-lint    # clippy -D warnings
+bin/check-tests   # nextest (or cargo test)
 ```
 
-To install the pre-commit hook:
+To install the pre-commit hook (lefthook composes it from
+`lefthook.yml`):
 
 ```bash
-ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+brew install lefthook
+lefthook install
 ```
 
 ## License
