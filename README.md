@@ -199,10 +199,12 @@ bin/check-lint    # clippy -D warnings
 bin/check-tests   # nextest (or cargo test)
 ```
 
-To install the pre-commit hook:
+To install the pre-commit hook (lefthook composes it from
+`lefthook.yml`):
 
 ```bash
-ln -sf ../../scripts/pre-commit .git/hooks/pre-commit
+brew install lefthook
+lefthook install
 ```
 
 ## License
