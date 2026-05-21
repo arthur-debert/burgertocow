@@ -25,6 +25,6 @@ permissions:
 
 jobs:
   ci:
-    uses: arthur-debert/release/.github/workflows/rust-ci.yml@take-iii
+    uses: arthur-debert/release/.github/workflows/rust-ci.yml@v1
     with:
       binary-name: burgertocow
