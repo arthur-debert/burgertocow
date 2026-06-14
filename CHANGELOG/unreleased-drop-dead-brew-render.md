@@ -1,1 +1,1 @@
-- remove dead-orphan homebrew render pair
+- Remove dead-orphan homebrew render pair
