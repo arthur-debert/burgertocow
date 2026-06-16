@@ -1,1 +1,1 @@
-- Add CLI integration tests (0%→92% coverage) and surface data-file path in JSON-parse error context
+- Add CLI integration tests (burgertocow-cli/src/main.rs 0% → 95% line coverage) and surface data-file path in JSON-parse error context
