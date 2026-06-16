@@ -1,0 +1,1 @@
+- Revert the stray 0.4.2-release-rc version bump pushed to main by a release-tooling verification-cut bug; restore 0.4.1-rc.2.
