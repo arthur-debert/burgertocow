@@ -48,13 +48,14 @@ fn main() -> Result<()> {
             let t_str = fs::read_to_string(template)
                 .with_context(|| format!("reading template {template}"))?;
             let d_str = fs::read_to_string(data).with_context(|| format!("reading data {data}"))?;
-            let ctx: serde_json::Value = serde_json::from_str(&d_str)?;
+            let ctx: serde_json::Value = serde_json::from_str(&d_str)
+                .with_context(|| format!("parsing JSON data file {data}"))?;
 
             let mut tracker = Tracker::new();
             tracker.add_template(template, &t_str)?;
             let tracked = tracker.render(template, &ctx)?;
 
-            fs::write(out, tracked.output())?;
+            fs::write(out, tracked.output()).with_context(|| format!("writing output {out}"))?;
             println!("Rendered output written to {out}");
         }
         Commands::Diff {
@@ -67,7 +68,8 @@ fn main() -> Result<()> {
             let d_str = fs::read_to_string(data).with_context(|| format!("reading data {data}"))?;
             let m_str = fs::read_to_string(modified)
                 .with_context(|| format!("reading modified {modified}"))?;
-            let ctx: serde_json::Value = serde_json::from_str(&d_str)?;
+            let ctx: serde_json::Value = serde_json::from_str(&d_str)
+                .with_context(|| format!("parsing JSON data file {data}"))?;
 
             let mut tracker = Tracker::new();
             tracker.add_template(template, &t_str)?;

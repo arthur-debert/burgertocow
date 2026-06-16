@@ -1,0 +1,1 @@
+- Add CLI integration tests (0%→92% coverage) and surface data-file path in JSON-parse error context
