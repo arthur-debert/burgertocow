@@ -1,0 +1,1 @@
+- Restore byte-exact loop test fixtures mangled by markdown autofix

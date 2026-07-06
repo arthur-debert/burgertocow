@@ -1,4 +1,3 @@
 My shopping list:
-
 - Apple
-- Banana
+* Banana
