@@ -6,7 +6,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-05-02
 
-
 ### Added
 
 - **`generate_diff_with_markers_opts` + `DiffOptions`** — new entry point
@@ -24,8 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ranges clamp silently; overlapping ranges merge. The legacy
   `generate_diff_with_markers` is unchanged and remains a thin wrapper
   that builds an empty mask. (#13)
-## [0.3.1] - 2026-05-01
 
+## [0.3.1] - 2026-05-01
 
 ### Changed
 
@@ -40,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Intel-mac dropped from release artifacts** (`x86_64-apple-darwin`).
   arm64-only macOS by canonical convention. v0.3.0 and earlier remain
   available for Intel users via direct GH release download.
+
 ## [0.3.0] - 2026-05-01
 
 ### Added
@@ -69,7 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `TrackedRender` carrying both clean output and the tracked output.
 - `generate_diff` function that reverse-maps modifications on a render back
   to a unified diff against the source template, using skeleton extraction
-  + LCS alignment (via the `similar` crate).
+  - LCS alignment (via the `similar` crate).
 - Conflict markers (`<<<< diff decision needed >>>>`) emitted for changes
   that cannot be safely aligned (e.g. edits to non-first loop iterations).
 - `burgertocow` CLI with `render` and `diff` subcommands.

@@ -33,7 +33,7 @@ theory.
 ### Determined correctly
 
 | Scenario | Example |
-|---|---|
+| --- | --- |
 | Unchanged render (no edits) | render == modified → empty diff |
 | Pure variable value change | `{{ user }}` rendered as `Ada`, modified to `Ida` → empty diff |
 | Static-text edit outside any loop/conditional | `Welcome.` → `Greetings.` in a header line |
@@ -46,7 +46,7 @@ theory.
 ### Surfaced as a conflict (safe, but needs a human)
 
 | Scenario | Why |
-|---|---|
+| --- | --- |
 | Different static edits across loop iterations | We can't tell which iteration "wins" as the template rule |
 | Loop body varies per iteration (`{% if loop.first %}…`) | Later iterations don't match the first one's skeleton, fallback can't route them |
 | Edit inside a conditional branch that **didn't** render | We have no rendered twin to map back from |
@@ -55,7 +55,7 @@ theory.
 ### Conservative (reported as template edit — usually correct, sometimes a false positive)
 
 | Scenario | What we do |
-|---|---|
+| --- | --- |
 | Insert at the exact first/last character of a `{{ v }}` region | Treated as template edit; could also be "variable got a prefix/suffix" |
 | Insert between two adjacent `{{ a }}{{ b }}` variables with no static separator | Treated as template edit |
 | Variable value shares characters with surrounding static text (fragmented char-level diff) | Whatever char-level Myers decides — may split one logical edit across seams |
@@ -63,7 +63,7 @@ theory.
 ### Out of scope
 
 | Scenario | Notes |
-|---|---|
+| --- | --- |
 | HTML-auto-escape with `Value::from_safe_string` carrying raw marker bytes | Explicit passthrough of unescaped content; documented in `engine` module |
 | Templates that emit our marker bytes (`U+001E`/`U+001F`) as literal static text | Would confuse the skeleton parser; vanishingly rare in real content |
 | Reconstructing which *variable* a changed value belongs to by fingerprinting | Not attempted — we only classify edits, we don't re-attribute values |
