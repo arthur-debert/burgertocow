@@ -1,12 +1,18 @@
-<!-- generated - do not edit. See CHANGELOG/README.txt -->
+<!-- generated - do not edit; fragments live in CHANGELOG/ (`shipit changelog render` regenerates this file) -->
 
 # Changelog
 
 ## Unreleased
 
+- Add CLI integration tests (burgertocow-cli/src/main.rs 0% → 95% line coverage) and surface data-file path in JSON-parse error context
+- Remove dead-orphan homebrew render pair
 - Migrate changelog handling to the fragment-directory model
   (arthur-debert/release#201). Future entries go in
   CHANGELOG/unreleased-<slug>.md fragments via `bin/changelog add`.
+- ci: migrate release reusable-workflow callers from @v2 to @v3
+- Restore byte-exact loop test fixtures mangled by markdown autofix
+- Revert the stray 0.4.2-release-rc version bump pushed to main by a release-tooling verification-cut bug; restore 0.4.1-rc.2.
+
 
 All notable changes to this project will be documented in this file.
 
