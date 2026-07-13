@@ -68,6 +68,41 @@ local = true
 [toolchains]
 "." = "rust"
 
+# [artifacts] — burgertocow's declared Artifact set for the shipit release
+# pipeline (ADP02-WS08, arthur-debert/shipit#841; modeled on padz's
+# WS06-proven consumer map — the exact same 5-asset shape). The legacy
+# surface it replaces is release.yml → rust-cli.yml@v3 (`crates:
+# burgertocow-lib,burgertocow`, `bin-name: burgertocow`, defaults: darwin
+# arm64 + linux gnu x86_64/aarch64, brew, apt).
+#   - [artifacts.burgertocow] is the binary-tarball artifact (the brew
+#     formula subject): archive composition over the same three
+#     native-runner platforms the legacy matrix built, distributed to
+#     gh-release + crates (burgertocow-lib then burgertocow — shipit
+#     derives the workspace topo order itself) + brew (the tap is shipit's
+#     portfolio constant, arthur-debert/homebrew-tools, which already
+#     carries burgertocow.rb — same as legacy).
+#   - [artifacts.burgertocow-deb] is the legacy `apt: true` leg: cargo-deb
+#     against the pre-built release binary, linux platforms only,
+#     gh-release only (legacy attached the .debs to the GH release; there
+#     is no apt repository endpoint).
+# `sign = true` on the archive artifact — UNLIKE padz (unsigned darwin by
+# owner decision): this repo's legacy darwin lane codesigned + notarized
+# the raw binary, and shipit#800's archive-leg signer carries that forward
+# (darwin legs only; secretreq/preflight derive the Apple cert pair +
+# notary trio from the bare flag).
+[artifacts.burgertocow]
+build = [{ toolchain = "rust", package = "burgertocow" }]
+platforms = ["darwin-arm64", "linux-x86_64", "linux-arm64"]
+bundle = { composition = "archive" }
+endpoints = ["gh-release", "crates", "brew"]
+sign = true
+
+[artifacts.burgertocow-deb]
+build = [{ toolchain = "rust", package = "burgertocow" }]
+platforms = ["linux-x86_64", "linux-arm64"]
+bundle = { composition = "deb" }
+endpoints = ["gh-release"]
+
 [shipit]
 version = "c8ef2189cc57f58af425afcd383ef44575108b88"
 
