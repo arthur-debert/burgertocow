@@ -26,30 +26,32 @@ name: shipit-release
 # codesign+notarize, so unlike crates-only standout the build and sign
 # dispatches fan over real legs here.
 #
-# Secrets — exactly the plan-required set for burgertocow's plan:
+# Secrets — the UNIFORM plan-required grant (shipit#896): preflight
+# re-validates the WHOLE release plan at every stage entry, so `prepare`
+# forwards the SAME secret set as `full` — no per-stage subsetting;
+# which secrets a stage actually spends is the plan's call, not this
+# caller's. `sign` and `publish` forward every secret their blocks
+# declare (the Apple set and the registry set respectively — a `uses:`
+# job may only forward secrets the called workflow declares); `build`
+# declares none, so it forwards none.
 #   RELEASE_TOKEN         prepare's tag+branch push through the ruleset
 #                         (a GITHUB_TOKEN push would not re-trigger
 #                         workflows).
 #   CARGO_REGISTRY_TOKEN  the crates endpoint's registry token, mapped
 #                         from this repo's legacy-named CRATES_IO_KEY
-#                         secret (NOT renamed: the legacy release.yml
-#                         still consumes it under that name until the
-#                         post-rc-proof cleanup retires it). Forwarded to
-#                         the stages that can publish crates (`full`,
-#                         `publish`); the RC guard drops the registry
+#                         secret (the repo secret keeps its legacy name;
+#                         renaming it is a repo settings change, not this
+#                         caller's). The RC guard drops the registry
 #                         endpoints on an -release-rc version centrally.
 #   HOMEBREW_TAP_TOKEN    the brew endpoint's tap push (the portfolio tap
 #                         arthur-debert/homebrew-tools already carries
-#                         burgertocow.rb). Forwarded with the registry
-#                         set (`full`, `publish`).
+#                         burgertocow.rb).
 #   APPLE_CERTIFICATE     the mac signing cert, mapped from this repo's
 #                         legacy-named APPLE_CERTIFICATE_P12_BASE64
 #                         secret (NOT renamed, same rule as above), plus
 #                         APPLE_CERTIFICATE_PASSWORD and the ASC notary
 #                         trio ASC_API_KEY_BASE64 / ASC_API_KEY_ID /
 #                         ASC_API_ISSUER_ID (exact repo secret names).
-#                         Forwarded to the stages that can sign (`full`,
-#                         `sign`).
 # gh-release rides the workflow's own GITHUB_TOKEN (no registry entry).
 
 on:
@@ -135,6 +137,13 @@ jobs:
       unsigned: ${{ inputs.unsigned }}
     secrets:
       RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_KEY }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+      ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+      ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
 
   build:
     if: inputs.stage == 'build'
